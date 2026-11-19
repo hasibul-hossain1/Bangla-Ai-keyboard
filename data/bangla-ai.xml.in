@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- IBus component: install.sh fills in the exec path and copies this to /usr/share/ibus/component/ -->
+<component>
+  <name>org.freedesktop.IBus.BanglaAI</name>
+  <description>Bangla AI input method (phonetic + Claude suggestions)</description>
+  <exec>@EXEC@</exec>
+  <version>0.1.0</version>
+  <author>hasibul-hossain1</author>
+  <license>MIT</license>
+  <homepage>https://github.com/hasibul-hossain1/Bangla-Ai-keyboard</homepage>
+  <textdomain>bangla-ai-ime</textdomain>
+  <engines>
+    <engine>
+      <name>bangla-ai</name>
+      <language>bn</language>
+      <license>MIT</license>
+      <author>hasibul-hossain1</author>
+      <icon></icon>
+      <layout>us</layout>
+      <longname>Bangla AI (Phonetic + Claude)</longname>
+      <description>Banglish type korun, Bangla pan, Claude er smart suggestion soho</description>
+      <rank>0</rank>
+      <symbol>বা</symbol>
+    </engine>
+  </engines>
+</component>

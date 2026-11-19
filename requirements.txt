@@ -1,0 +1,2 @@
+# PyGObject and the IBus/libsecret typelibs come from apt (see install.sh).
+anthropic>=1.17,<2
