@@ -1,6 +1,7 @@
 """Claude layer tests against a fake HTTP transport: no network, no API key, no cost."""
 
 import json
+import threading
 import time
 import unittest
 
@@ -54,7 +55,8 @@ class SuggesterFetchTest(unittest.TestCase):
         return json.loads(self.requests[index].content)
 
     def test_fallback_model_request_shape(self):
-        s = self.make(lambda r: httpx2.Response(200, json=_message({"words": ["করবো"], "completion": " আমি"})))
+        s = self.make(lambda r: httpx2.Response(200, json=_message({"words": ["করবো"], "completion": " আমি"})),
+                      model="claude-opus-5-5")
         result = s._fetch("আমি ", "korbo")
         self.assertEqual(result.words, ["করবো"])
         self.assertEqual(result.completion, " আমি")
@@ -70,10 +72,11 @@ class SuggesterFetchTest(unittest.TestCase):
         self.assertNotIn("thinking", body)
         self.assertEqual(json.loads(body["messages"][0]["content"]), {"context": "আমি ", "current_input": "korbo"})
 
-    def test_haiku_has_no_fallbacks(self):
-        s = self.make(lambda r: httpx2.Response(200, json=_message({"words": [], "completion": ""})),
-                      model="claude-haiku-5-5")
+    def test_default_model_is_haiku_without_fallbacks(self):
+        s = self.make(lambda r: httpx2.Response(200, json=_message({"words": [], "completion": ""})))
         s._fetch("", "ami")
+        self.assertEqual(self.body()["model"], "claude-haiku-5-5")
+        self.assertEqual(self.body()["output_config"]["effort"], "low")
         self.assertNotIn("fallbacks", self.body())
         self.assertNotIn("server-side-fallback", self.requests[0].headers.get("anthropic-beta", ""))
 
@@ -120,6 +123,46 @@ class SuggesterFetchTest(unittest.TestCase):
                 time.sleep(0.01)
         self.assertEqual([r.words for r in results], [["আমি"], ["আমি"]])
         self.assertEqual(len(self.requests), 1)  # the second answer came from the cache
+
+    def test_cache_ignores_older_context(self):
+        s = self.make(lambda r: httpx2.Response(200, json=_message({"words": ["যাবো"], "completion": ""})))
+        results = []
+        context = GLib.MainContext.default()
+        for before in ("আজ সকালে আমি বাড়ি ", "কাল সকালে আমি বাড়ি "):
+            s.request(before, "jabo", results.append)
+            deadline = time.monotonic() + 5
+            count = len(results)
+            while len(results) == count and time.monotonic() < deadline:
+                context.iteration(False)
+                time.sleep(0.01)
+        self.assertEqual(len(results), 2)
+        self.assertEqual(len(self.requests), 1)  # same last words -> answered from the cache
+
+    def test_newer_request_replaces_waiting_one(self):
+        release = threading.Event()
+
+        def slow(request):
+            release.wait(5)
+            word = json.loads(json.loads(request.content)["messages"][0]["content"])["current_input"]
+            return httpx2.Response(200, json=_message({"words": [word.upper()], "completion": ""}))
+
+        s = self.make(slow)
+        results = []
+        s.request("", "a", lambda r: results.append(("a", r)))  # starts right away
+        time.sleep(0.1)
+        s.request("", "ab", lambda r: results.append(("ab", r)))  # waits ...
+        s.request("", "abc", lambda r: results.append(("abc", r)))  # ... and is replaced by this
+        release.set()
+        context = GLib.MainContext.default()
+        deadline = time.monotonic() + 5
+        while len(results) < 2 and time.monotonic() < deadline:
+            context.iteration(False)
+            time.sleep(0.01)
+        time.sleep(0.1)
+        context.iteration(False)
+        self.assertEqual([name for name, _ in results], ["a", "abc"])
+        sent = [json.loads(json.loads(r.content)["messages"][0]["content"])["current_input"] for r in self.requests]
+        self.assertEqual(sent, ["a", "abc"])
 
     def test_backoff_skips_request(self):
         s = self.make(lambda r: httpx2.Response(200, json=_message({"words": [], "completion": ""})))

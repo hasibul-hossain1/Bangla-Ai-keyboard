@@ -56,10 +56,12 @@ class BanglaAIEngine(IBus.Engine):
         super().__init__()
         self._config = self.services.config
         self._userdict = self.services.userdict
+        self._dictionary = self.services.dictionary
         self._suggester = self.services.suggester
 
         self._buffer = ""  # Latin letters of the word being typed
-        self._local = []  # candidates from the phonetic rules and the user dictionary
+        self._local = []  # candidates from the dictionaries and the phonetic rules
+        self._learned = []  # words the user picked before for this buffer
         self._claude_words = []  # candidates from Claude for the current buffer
         self._candidates = []  # what the popup shows, in order
         self._ghost = ""  # inline completion shown after the cursor
@@ -186,9 +188,10 @@ class BanglaAIEngine(IBus.Engine):
         self._claude_words = []
         self._cursor_moved = False
         roman = self._buffer
+        self._learned = self._userdict.exact(roman)
         self._local = _unique(
-            self._userdict.exact(roman)
-            + phonetic.candidates(roman)
+            self._learned
+            + self._dictionary.candidates(roman)
             + self._userdict.completions(roman)
         )
         self._rebuild_candidates()
@@ -207,7 +210,8 @@ class BanglaAIEngine(IBus.Engine):
         cursor = 0
         if previous in self._candidates:
             cursor = self._candidates.index(previous)
-        elif self._config["auto_select_claude"] and self._claude_words:
+        elif self._config["auto_select_claude"] and self._claude_words and not self._learned:
+            # Claude's best guess, unless the user already taught us what these letters mean.
             cursor = self._candidates.index(self._claude_words[0])
         self._table.set_cursor_pos(cursor)
 
@@ -324,6 +328,7 @@ class BanglaAIEngine(IBus.Engine):
     def _clear_composition(self):
         self._buffer = ""
         self._local = []
+        self._learned = []
         self._claude_words = []
         self._candidates = []
         self._ghost = ""

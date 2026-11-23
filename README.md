@@ -8,12 +8,19 @@ context bujhe smart suggestion dibe, code editor er IntelliSense/Copilot er moto
 ```
 keystroke ──► IBus engine (bangla_ai/engine.py)
                ├─ Local layer (instant, offline)
-               │    Avro-style phonetic rules + apnar shekha word → popup
-               └─ Claude layer (typing e ~400ms pause hole)
+               │    apnar shekha word + 34k shobder dictionary + Avro-style rule → popup
+               └─ Claude layer (typing e ~300ms pause hole)
                     context + current word → Claude API
                     → popup e ✦ word, inline completion (Tab = accept)
 ```
 
+- **Dictionary:** `bhalo` → ভালো, `porikkha` → পরীক্ষা, `dhonnobad` → ধন্যবাদ, `shami` → স্বামী.
+  ত/ট, স/শ/ষ, ই/ঈ, ন/ণ, য-ফলা, ব-ফলা na mille o thik banan ta khuje dey, shobcheye
+  common ta age. Capital diye likhle (`Tak` → টাক) oita age ashe. Adha word e
+  (`bangl` → বাংলা, বাংলাদেশ) completion o dey.
+- **AI auto-select:** Claude er answer ashle se nijei bujhe ney apni kon Bangla shobdo likhte
+  chacchen, ar sheta select kore dey: `hello` → হ্যালো, `phone` → ফোন. ↑↓ diye bodlano jay.
+  Ager bar ei letter gulo diye je shobdo bechhe niyechen, sheta i select thake.
 - **Popup:** local candidate prothome thake (Space dile oita bose), tarpor Claude er ✦ word,
   tarpor onno variant.
 - **Inline completion:** Claude er porer kotha cursor er pore underline/gray hoye dekhay.
@@ -71,18 +78,24 @@ Install charai shudhu phonetic rule dekhte: `python3 -m bangla_ai --show ami bha
 
 | Key | Default | Mane |
 |---|---|---|
-| `model` | `claude-opus-5-5` | Claude model. Beshi speed chaile `claude-haiku-5-5` try korun |
+| `model` | `claude-haiku-5-5` | Claude model. Haiku shobcheye druto. Aro bhalo suggestion chaile `claude-sonnet-5-5` ba `claude-opus-5-5` (dhire) |
 | `effort` | `low` | Claude koto bhabbe. Kom = druto |
 | `claude_enabled` | `true` | Claude e kichu pathabe kina (input menu theke o toggle kora jay) |
 | `inline_completion` | `true` | Inline completion (menu theke o toggle) |
-| `auto_select_claude` | `false` | `true` hole Claude er prothom word auto select hoy (Space e sheta bose) |
-| `debounce_ms` | `400` | Shesh key er koto ms por Claude ke jiggesh korbe |
+| `auto_select_claude` | `true` | Claude er best guess nije select hoy, Space e sheta bose. ↑↓ diye onno ta neya jay. Ager bar ei letter e je word bechhe nichhen, sheta select thake |
+| `debounce_ms` | `300` | Shesh key er koto ms por Claude ke jiggesh korbe |
 | `context_chars` | `120` | Ager koto character context hishebe jabe |
 | `min_prediction_words` | `1` | Koyta word type korar por next-word prediction shuru hobe |
 | `max_claude_words` | `4` | Popup e Claude er koyta word |
 | `request_timeout_seconds` | `8.0` | Claude request timeout |
 | `bangla_digits` | `false` | 0-9 → ০-৯ |
 | `dari_for_period` | `true` | `.` → `।` |
+
+Purono install e `config.json` e ager model (`claude-opus-5-5`) save kora thakte pare. Haiku chaile
+oikhane `"model": "claude-haiku-5-5"` kore `ibus restart` din.
+
+Ek shomoy ekta request i Claude e jay. Type korte thakle opekkhay thaka purono request bad pore jay,
+shudhu shesh ta jay. Ekoi shesh 3 word er pore ekoi word hole cache theke sathe sathe answer ashe.
 
 Model `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5` ba `claude-fable-5-1` hole server-side
 refusal fallback (`fallbacks: "default"`) on thake.
@@ -113,9 +126,21 @@ python3 -m unittest discover -s tests -t .
 **Status (2026-11-19, Ubuntu 26.04 GNOME Wayland, IBus 1.5.34):**
 
 - 28/28 unit test pass (phonetic, user dictionary, Claude layer fake HTTP diye).
+- 2026-11-23: dictionary, Claude request queue ar AI auto-select jog hoyeche. 40/40 unit test pass
+  (installed venv e, real SDK diye).
 - Engine smoke test: real IBus connection e simulated key diye 41/41 check pass.
 - `./install.sh` kaj kore, IBus engine ta list e ashe.
 - Ekhono baki: GNOME app e lomba shomoy ashol typing, ashol Claude API call.
+
+## Dictionary
+
+`bangla_ai/data/words.txt` asheche [FrequencyWords](https://github.com/hermitdave/FrequencyWords)
+(OpenSubtitles 2018, Hermit Dave, CC BY-SA 4.0) theke, `tools/build_dict.py` diye filter kora.
+Notun list diye abar banate:
+
+```bash
+python3 tools/build_dict.py bn_full.txt bangla_ai/data/words.txt
+```
 
 ## Uninstall
 

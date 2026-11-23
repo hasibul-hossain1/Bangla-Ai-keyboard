@@ -27,8 +27,11 @@ word, or empty).
 
 Return:
 - "words": up to 5 Bangla-script words the user most likely means by current_input, \
-best first. If current_input looks like the start of a longer word, include likely \
-completions. Use standard modern Bangla spelling. If current_input is empty, return [].
+best first. words[0] is selected automatically, so put your single best guess there, \
+using the context to decide. Phonetic rules often get the spelling wrong, so judge \
+by what the user means, not letter by letter: "hello" -> হ্যালো, "phone" -> ফোন, \
+"bhalo" -> ভালো. Use standard modern Bangla spelling. If current_input looks like the \
+start of a longer word, include likely completions. If current_input is empty, return [].
 - "completion": the Bangla text most likely to come next, at most 6 words. If \
 current_input is not empty it continues right after words[0]; start it with a space \
 when it begins a new word. If current_input is empty it continues directly after the \
@@ -51,7 +54,14 @@ OUTPUT_SCHEMA = {
 FALLBACK_MODELS = {"claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"}
 
 MAX_COMPLETION_CHARS = 80
-CACHE_SIZE = 256
+CACHE_SIZE = 512
+# The cache key keeps only the last few words of context, so the same word typed after
+# the same phrase is answered instantly even when earlier text differs.
+CACHE_CONTEXT_WORDS = 3
+
+
+def cache_key(context, roman):
+    return (" ".join(context.split()[-CACHE_CONTEXT_WORDS:]), context[-1:].isspace(), roman)
 
 
 class Suggestion:
@@ -61,7 +71,10 @@ class Suggestion:
 
 
 class Suggester:
-    """Runs Claude requests on worker threads; results come back on the GLib main loop.
+    """Runs Claude requests on a worker thread; results come back on the GLib main loop.
+
+    Only the newest request matters while typing: at most one request is in flight, and a
+    request that is still waiting is replaced (never called back) when a newer one comes.
 
     `status` is a short machine-readable hint the engine can show:
     None, "no-key", "auth", "rate-limit", "offline" or "error".
@@ -69,46 +82,68 @@ class Suggester:
 
     def __init__(self, config):
         self._config = config
-        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="claude")
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="claude")
         self._cache = OrderedDict()
         self._lock = threading.Lock()
         self._client = None
         self._backoff_until = 0.0
+        self._pending = None  # (context, roman, callback) waiting for the worker
+        self._busy = False  # the worker is running
         self.status = None
 
     def request(self, context, roman, callback):
         """Fetch a Suggestion for (context, roman); callback(result or None) runs on the main loop.
 
-        Returns False (and never calls back) while backing off after an error.
+        Returns False (and never calls back) while backing off after an error. A request
+        that is replaced by a newer one before it starts is never called back either.
         """
-        key = (context, roman)
-        with self._lock:
-            cached = self._cache.get(key)
-            if cached is not None:
-                self._cache.move_to_end(key)
+        cached = self._cached(cache_key(context, roman))
         if cached is not None:
             GLib.idle_add(_deliver, callback, cached)
             return True
         if time.monotonic() < self._backoff_until:
             return False
-        self._executor.submit(self._work, key, callback)
+        with self._lock:
+            self._pending = (context, roman, callback)
+            if self._busy:
+                return True
+            self._busy = True
+        self._executor.submit(self._drain)
         return True
 
     def shutdown(self):
         self._executor.shutdown(wait=False, cancel_futures=True)
 
-    def _work(self, key, callback):
-        result = None
-        try:
-            result = self._fetch(*key)
-        except Exception:
-            log.exception("Unexpected error while fetching suggestions")
-            self.status = "error"
-        if result is not None:
+    def _cached(self, key):
+        with self._lock:
+            cached = self._cache.get(key)
+            if cached is not None:
+                self._cache.move_to_end(key)
+            return cached
+
+    def _drain(self):
+        while True:
             with self._lock:
-                self._cache[key] = result
-                while len(self._cache) > CACHE_SIZE:
-                    self._cache.popitem(last=False)
+                job, self._pending = self._pending, None
+                if job is None:
+                    self._busy = False
+                    return
+            self._work(*job)
+
+    def _work(self, context, roman, callback):
+        key = cache_key(context, roman)
+        result = self._cached(key)
+        if result is None and time.monotonic() >= self._backoff_until:
+            try:
+                result = self._fetch(context, roman)
+            except Exception:
+                log.exception("Unexpected error while fetching suggestions")
+                self.status = "error"
+            if result is not None:
+                with self._lock:
+                    self._cache[key] = result
+                    while len(self._cache) > CACHE_SIZE:
+                        self._cache.popitem(last=False)
         GLib.idle_add(_deliver, callback, result)
 
     def _get_client(self):

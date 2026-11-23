@@ -11,6 +11,7 @@ from gi.repository import GLib, GObject, IBus
 
 from .claude import Suggester
 from .config import USER_DICT_FILE, VERSION, load_config
+from .dictionary import Dictionary
 from .engine import BanglaAIEngine
 from .userdict import UserDict
 
@@ -27,6 +28,7 @@ class Services:
     def __init__(self):
         self.config = load_config()
         self.userdict = UserDict(USER_DICT_FILE)
+        self.dictionary = Dictionary.load()
         self.suggester = Suggester(self.config)
         self._save_id = 0
 
