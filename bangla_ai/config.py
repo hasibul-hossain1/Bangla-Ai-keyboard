@@ -24,17 +24,20 @@ USER_DICT_FILE = DATA_DIR / "user_dict.json"
 LOG_FILE = CACHE_DIR / "engine.log"
 
 DEFAULTS = {
-    # Claude model and how much it thinks. Lower effort answers faster.
-    "model": "claude-opus-5-5",
+    # Claude model and how much it thinks. Haiku and low effort answer fastest,
+    # which matters more than depth while typing.
+    "model": "claude-haiku-5-5",
     "effort": "low",
     # Master switch for sending typed text to the Claude API.
     "claude_enabled": True,
     # Show Claude's continuation inline (Tab accepts, Esc dismisses).
     "inline_completion": True,
-    # Highlight Claude's top word when it arrives, so Space commits it.
-    "auto_select_claude": False,
+    # Select Claude's best guess when it arrives, so Space commits it.
+    # Arrow keys still pick another candidate; a word you chose before for the same
+    # letters stays selected instead.
+    "auto_select_claude": True,
     # Pause (ms) after the last keystroke before asking Claude.
-    "debounce_ms": 400,
+    "debounce_ms": 300,
     # How many recently typed characters are sent as context.
     "context_chars": 120,
     # Next-word prediction only starts after this many typed words.

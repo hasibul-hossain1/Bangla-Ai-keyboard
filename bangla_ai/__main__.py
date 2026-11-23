@@ -44,10 +44,11 @@ def _clear_key():
 
 
 def _show(words):
-    from . import phonetic
+    from .dictionary import Dictionary
 
+    dictionary = Dictionary.load()
     for word in words:
-        print(f"{word}: {'  '.join(phonetic.candidates(word))}")
+        print(f"{word}: {'  '.join(dictionary.candidates(word))}")
     return 0
 
 
