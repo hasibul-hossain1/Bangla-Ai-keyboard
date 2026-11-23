@@ -24,7 +24,14 @@ keystroke ──► IBus engine (bangla_ai/engine.py)
 - **Popup:** local candidate prothome thake (Space dile oita bose), tarpor Claude er ✦ word,
   tarpor onno variant.
 - **Inline completion:** Claude er porer kotha cursor er pore underline/gray hoye dekhay.
-  Tab = accept, Esc = bad, type korte thakle nije chole jay.
+  Tab = accept, Esc = bad, type korte thakle nije chole jay. Word, Space, dari/komma, number ba
+  click diye word bosano, Backspace, Tab e accept: protitar por ektu thamle notun suggestion ashe.
+  Suggestion space diye shuru hole Space chaple baki ta theke jay.
+- **Context cursor er sathe chole:** je app nijer lekha keyboard ke dekhay (GNOME er beshirbhag
+  app), shekhane cursor er ager lekha theke context ney. Mouse e click kore onno jaygay gele
+  shekhaner lekha dekhe suggestion dey; line er sheshe thakle click er por type na korei ashe.
+  Age likha ba paste kora lekha o dhore. Je app lekha dekhay na, shekhane ei keyboard diye
+  type kora lekha i context, ar mouse narale sheta muche jay.
 - **Shekha:** apni je word select koren, porer bar oi Banglish er jonno sheta age ashe.
 
 ## Install
@@ -84,7 +91,8 @@ Install charai shudhu phonetic rule dekhte: `python3 -m bangla_ai --show ami bha
 | `inline_completion` | `true` | Inline completion (menu theke o toggle) |
 | `auto_select_claude` | `true` | Claude er best guess nije select hoy, Space e sheta bose. ↑↓ diye onno ta neya jay. Ager bar ei letter e je word bechhe nichhen, sheta select thake |
 | `debounce_ms` | `300` | Shesh key er koto ms por Claude ke jiggesh korbe |
-| `context_chars` | `120` | Ager koto character context hishebe jabe |
+| `context_chars` | `120` | Cursor er ager koto character context hishebe jabe |
+| `context_from_app` | `true` | App er nijer lekha theke context neya (mouse narale notun jaygar lekha). `false`: shudhu ei keyboard diye type kora lekha |
 | `min_prediction_words` | `1` | Koyta word type korar por next-word prediction shuru hobe |
 | `max_claude_words` | `4` | Popup e Claude er koyta word |
 | `request_timeout_seconds` | `8.0` | Claude request timeout |
@@ -102,7 +110,10 @@ refusal fallback (`fallbacks: "default"`) on thake.
 
 ## Privacy
 
-- Claude on thakle ja type koren (shesh `context_chars` character + current word) Anthropic API te jay.
+- Claude on thakle cursor er ager shesh `context_chars` character + current word Anthropic API te
+  jay. `context_from_app` on thakle eta app er lekha theke ashe, tai age likha ba paste kora lekha o
+  jete pare, apni ekhon type na korleo (jemon click er por line er sheshe). Na chaile config e
+  `"context_from_app": false` kore `ibus restart`.
 - Password/PIN field e engine puro bondho thake, kichui pathay na.
 - Top bar er keyboard menu theke "Claude suggestion" off korle shudhu local layer chole.
 - API key GNOME Keyring e thake. Keyring na pele `~/.config/bangla-ai-ime/api_key` (chmod 600).
@@ -111,7 +122,8 @@ refusal fallback (`fallbacks: "default"`) on thake.
 ## Shimabaddhota
 
 - Inline completion er gray rong app er upor nirbhor kore. Onek app shudhu underline dekhay.
-- IME shudhu ei field e apnar type kora text dekhe. Mouse e cursor shorale context reset hoy.
+- Je app nijer lekha keyboard ke dekhay na (kichu Chrome/Electron app), shekhane IME shudhu ei
+  field e apnar type kora text dekhe, ar mouse e cursor shorale context reset hoy.
 - Chrome/Electron app (VS Code, Slack) e Wayland IME er jonno `--enable-wayland-ime` flag lagte pare.
 
 ## Test

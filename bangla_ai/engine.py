@@ -9,6 +9,7 @@ from gi.repository import GLib, IBus
 
 from . import phonetic
 from .config import save_config
+from .context import at_line_end, before_cursor
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +66,13 @@ class BanglaAIEngine(IBus.Engine):
         self._claude_words = []  # candidates from Claude for the current buffer
         self._candidates = []  # what the popup shows, in order
         self._ghost = ""  # inline completion shown after the cursor
+        self._ghost_context = ""  # the context Claude saw for that completion
         self._context = ""  # text recently typed into this input field
+        self._caps = 0  # what the app supports (IBus.Capabilite flags)
+        # The text before the cursor as the app shared it when the last key was pressed,
+        # and what it should be after that key (see context.before_cursor). None: unknown.
+        self._shared_base = None
+        self._expected = None
         self._password = False
         self._generation = 0  # bumped on every change so stale Claude replies are dropped
         self._debounce_id = 0
@@ -88,11 +95,13 @@ class BanglaAIEngine(IBus.Engine):
             return False
         if self._password:
             return False
+        # Apps refresh the text they share right before each key: start from that.
+        self._shared_base = self._expected = self._shared_before_cursor()
         if state & SHORTCUT_MASK:
             # Ctrl/Alt/Super shortcuts belong to the application: finish the word first.
             self._dismiss_ghost()
             self._commit_selected()
-            self._context = ""
+            self._lose_track()
             return False
 
         if self._ghost and keyval == IBus.KEY_Tab:
@@ -100,6 +109,15 @@ class BanglaAIEngine(IBus.Engine):
             return True
         if self._ghost and keyval == IBus.KEY_Escape:
             self._dismiss_ghost()
+            return True
+        if self._ghost.startswith(" ") and keyval == IBus.KEY_space and not self._buffer:
+            # Typing the space the suggestion starts with keeps the rest of it on screen.
+            rest = self._ghost[1:]
+            self._commit_raw(" ")
+            self._ghost = rest
+            self._refresh_ui()
+            if not rest:
+                self._schedule_prediction()
             return True
         self._dismiss_ghost()
 
@@ -120,10 +138,12 @@ class BanglaAIEngine(IBus.Engine):
             else:
                 self._invalidate()
                 self._clear_composition()
+                self._schedule_prediction()
             return True
         if keyval == IBus.KEY_Escape:
             # Keep the Latin letters as typed (handy for an English word).
             self._commit_raw(self._buffer)
+            self._schedule_prediction()
             return True
         if keyval == IBus.KEY_space:
             self._commit(self._selected_word(), " ")
@@ -133,6 +153,7 @@ class BanglaAIEngine(IBus.Engine):
             index = self._page_start() + keyval - IBus.KEY_1
             if index < len(self._candidates):
                 self._commit(self._candidates[index])
+                self._schedule_prediction()
             return True
         moves = {
             IBus.KEY_Down: self._table.cursor_down,
@@ -148,31 +169,42 @@ class BanglaAIEngine(IBus.Engine):
             # Punctuation or a digit ends the word.
             word = self._selected_word()
             self._commit(word, self._convert_symbol(ch, word))
+            self._schedule_prediction()
             return True
         # Enter, Tab, arrows and other keys: finish the word, then let the app handle the key.
         self._commit(self._selected_word())
+        if keyval in ENTER_KEYS:
+            self._remember("\n")
+        else:
+            self._lose_track()
         return False
 
     def _key_while_idle(self, keyval, ch):
         if ch:
-            converted = self._convert_symbol(ch, self._context)
+            converted = self._convert_symbol(ch, self._text_before_cursor())
             if converted != ch:
                 self._commit_raw(converted)
-                return True
-            self._invalidate()
-            self._remember(ch)
-            if ch == " ":
-                self._schedule_prediction()
-            return False
+            else:
+                self._invalidate()
+                self._remember(ch)  # the app types this character itself
+            self._schedule_prediction()
+            return converted != ch
         self._invalidate()
         if keyval == IBus.KEY_BackSpace:
             self._context = self._context[:-1]
+            if self._expected is not None:
+                self._expected = self._expected[:-1]
+            self._schedule_prediction()
         elif keyval in ENTER_KEYS:
             self._remember("\n")
         else:
-            # The cursor may have moved; what came before it is unknown now.
-            self._context = ""
+            self._lose_track()
         return False
+
+    def _lose_track(self):
+        """The cursor may have moved: what we know about the text before it is no longer valid."""
+        self._context = ""
+        self._shared_base = self._expected = None
 
     def _convert_symbol(self, ch, before):
         if ch == "." and self._config["dari_for_period"] and not before[-1:].isdigit():
@@ -238,12 +270,19 @@ class BanglaAIEngine(IBus.Engine):
         if self._claude_on() and self._buffer:
             self._start_timer()
 
-    def _schedule_prediction(self):
+    def _schedule_prediction(self, only_at_line_end=False):
+        """Ask Claude, after the usual pause, how the text before the cursor goes on."""
         if not (self._claude_on() and self._config["inline_completion"]):
             return
-        if len(self._context.split()) < self._config["min_prediction_words"]:
+        if only_at_line_end:
+            # After a click: suggest only where a completion fits, not in the middle of text.
+            shared = self._read_surrounding()
+            if shared is None or not at_line_end(*shared):
+                return
+        context = self._text_before_cursor()
+        if len(context.split()) < self._config["min_prediction_words"]:
             return
-        if not phonetic.has_bangla(self._context):
+        if not phonetic.has_bangla(context):
             return
         self._start_timer()
 
@@ -260,14 +299,14 @@ class BanglaAIEngine(IBus.Engine):
         self._debounce_id = 0
         if generation == self._generation:
             roman = self._buffer
-            context = self._context[-self._config["context_chars"]:]
+            context = self._prediction_context()
             self._waiting = self._suggester.request(
-                context, roman, lambda result: self._on_suggestion(generation, roman, result)
+                context, roman, lambda result: self._on_suggestion(generation, roman, context, result)
             )
             self._refresh_ui()
         return GLib.SOURCE_REMOVE
 
-    def _on_suggestion(self, generation, roman, result):
+    def _on_suggestion(self, generation, roman, context, result):
         if generation != self._generation:
             return  # the user kept typing; this answer is stale
         self._waiting = False
@@ -277,15 +316,43 @@ class BanglaAIEngine(IBus.Engine):
                 self._rebuild_candidates()
             if self._config["inline_completion"] and result.completion:
                 ghost = result.completion
-                if not roman and self._context[-1:].isspace():
+                if not roman and context[-1:].isspace():
                     ghost = ghost.lstrip()
                 self._ghost = ghost
+                self._ghost_context = context
         self._refresh_ui()
 
     def _invalidate(self):
         self._generation += 1
         self._cancel_timer()
         self._waiting = False
+
+    # ----- text before the cursor -----
+
+    def _read_surrounding(self):
+        """(text, cursor) as the app shares it, or None if it shares nothing (or that is off)."""
+        if not self._config["context_from_app"] or not self._caps & IBus.Capabilite.SURROUNDING_TEXT:
+            return None
+        result = self.get_surrounding_text()
+        ibus_text, cursor = result[0], result[1]
+        text = ibus_text.get_text() if ibus_text is not None else ""
+        if not 0 <= cursor <= len(text):
+            return None
+        return text, cursor
+
+    def _shared_before_cursor(self):
+        shared = self._read_surrounding()
+        if shared is None:
+            return None
+        text, cursor = shared
+        return text[:cursor][-CONTEXT_KEEP:]
+
+    def _text_before_cursor(self):
+        return before_cursor(self._shared_before_cursor(), self._shared_base, self._expected, self._context)
+
+    def _prediction_context(self):
+        """What Claude gets as context: the end of the text before the cursor."""
+        return self._text_before_cursor()[-self._config["context_chars"]:]
 
     # ----- inline completion -----
 
@@ -296,6 +363,7 @@ class BanglaAIEngine(IBus.Engine):
             self._commit(self._selected_word(), ghost)
         else:
             self._commit_raw(ghost)
+        self._schedule_prediction()  # and what comes after that
 
     def _dismiss_ghost(self):
         if self._ghost:
@@ -324,6 +392,8 @@ class BanglaAIEngine(IBus.Engine):
 
     def _remember(self, text):
         self._context = (self._context + text)[-CONTEXT_KEEP:]
+        if self._expected is not None:
+            self._expected += text
 
     def _clear_composition(self):
         self._buffer = ""
@@ -382,10 +452,18 @@ class BanglaAIEngine(IBus.Engine):
 
     # ----- IBus callbacks -----
 
+    def do_set_capabilities(self, caps):
+        self._caps = caps
+
+    def do_enable(self):
+        # Asking once tells the app we use its text, so it keeps sending it.
+        self.get_surrounding_text()
+
     def do_focus_in(self):
         self._prop_claude.set_state(self._state_for("claude_enabled"))
         self._prop_inline.set_state(self._state_for("inline_completion"))
         self.register_properties(self._props)
+        self.get_surrounding_text()
 
     def do_focus_out(self):
         if self._ghost and self._buffer:
@@ -395,7 +473,12 @@ class BanglaAIEngine(IBus.Engine):
         self._forget()
 
     def do_reset(self):
+        # Apps reset the input method when the cursor moves (a mouse click, for example).
+        cleared_ghost = self._ghost_context if self._ghost else None
         self._forget()
+        if cleared_ghost is not None and self._prediction_context() == cleared_ghost:
+            return  # same place as the suggestion just cleared: do not bring it straight back
+        self._schedule_prediction(only_at_line_end=True)
 
     def do_disable(self):
         self._forget()
@@ -403,7 +486,7 @@ class BanglaAIEngine(IBus.Engine):
     def _forget(self):
         self._invalidate()
         self._clear_composition()
-        self._context = ""
+        self._lose_track()
 
     def do_set_content_type(self, purpose, hints):
         self._password = purpose in (IBus.InputPurpose.PASSWORD, IBus.InputPurpose.PIN)
