@@ -38,8 +38,12 @@ DEFAULTS = {
     "auto_select_claude": True,
     # Pause (ms) after the last keystroke before asking Claude.
     "debounce_ms": 300,
-    # How many recently typed characters are sent as context.
+    # How many characters before the cursor are sent as context.
     "context_chars": 120,
+    # Take the context from the app's own text where the app shares it, so it follows the
+    # cursor (mouse clicks too) and includes earlier or pasted text. Off: only text typed
+    # with this keyboard since the cursor last moved is used.
+    "context_from_app": True,
     # Next-word prediction only starts after this many typed words.
     "min_prediction_words": 1,
     "max_claude_words": 4,
